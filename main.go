@@ -4,19 +4,39 @@ import (
 	"fmt"
 	"net/http"
 	"log"
-	//"time"
 )
 
+type apiConfig struct {
+	fileserverHits int
+}
 
+func (cfg *apiConfig) handlerMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(fmt.Sprintf("Hits: %d", cfg.fileserverHits)))
+}
 
-// don't touch below this line
+func (cfg *apiConfig) handlerReset(w http.ResponseWriter, r *http.Request) {
+	cfg.fileserverHits = 0
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("Hits reset to 0"))
+}
 
-type request struct {
-	path string
+func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.fileserverHits++
+		next.ServeHTTP(w, r)
+	})
 }
 
 func HelloHandler(w http.ResponseWriter, r *http.Request){
 	w.Write([]byte("Hello World test"))
+}
+
+func oKPage(w http.ResponseWriter, r *http.Request){
+	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(http.StatusText(http.StatusOK)))
 }
 
 func middlewareCors(next http.Handler) http.Handler {
@@ -36,11 +56,20 @@ func middlewareCors(next http.Handler) http.Handler {
 	})
 }
 
+
 func main() {
 	fmt.Println("Starting")
 	mux := http.NewServeMux()
+	apiCfg := apiConfig{fileserverHits:0}
 	// mux.HandleFunc("/", HelloHandler)
 	// http.ListenAndServe("localhost:8080", mux)
+	mux.Handle("/assets", http.FileServer(http.Dir("./assets/logo.png")))
+	// mux.Handle("/app/", http.StripPrefix("/app", http.FileServer(http.Dir("."))))
+	mux.Handle("/app/", apiCfg.middlewareMetricsInc(http.StripPrefix("/app", http.FileServer(http.Dir(".")))))
+	mux.HandleFunc("/healthz", oKPage)
+	mux.HandleFunc("/metrics", apiCfg.handlerMetrics)
+	mux.HandleFunc("/reset", apiCfg.handlerReset)
+
 	corMux:= middlewareCors(mux)
 	srv := &http.Server{
 		Addr: ":8080",
